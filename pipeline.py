@@ -82,7 +82,7 @@ class prodigal(luigi.Task):
                     out_dir])
 
             #input scaffold fasta file
-            scaffolds = os.path.join("assembly", sample, "scaffolds.fasta")
+            scaffolds = os.path.join(assembly_dir, sample, "scaffolds.fasta")
             #output files
             proteins = os.path.join(out_dir, sample + "_" + "proteins.faa")
             genes = os.path.join(out_dir, sample + "_" + "genes")
