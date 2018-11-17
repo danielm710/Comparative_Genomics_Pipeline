@@ -1,10 +1,13 @@
 import os
 import luigi
+from collections import Counter
 from subprocess import Popen, PIPE
 
 output_dir = "output"
 assembly_dir = os.path.join(output_dir, "assembly")
 prediction_dir = os.path.join(output_dir, "prediction")
+compare_dir = os.path.join(output_dir, "compare")
+annotation_dir = os.path.join(output_dir, "annotation")
 script_dir = "scripts"
 
 def run_cmd(cmd):
@@ -551,6 +554,189 @@ class extract_duplicate_protein_final(luigi.Task):
                     prodigal_only,
                     FragGeneScan_only])
 
+class pan_genome(luigi.Task):
+    samples = GlobalParams().samples
+    protein_dir = os.path.join(prediction_dir, "protein")
+
+    def requires(self):
+        return extract_unique_protein_final()
+
+    def output(self):
+        output = {}
+
+        for sample in self.samples:
+            sample_only_proteins = os.path.join(compare_dir, sample +
+                    "_variableGenome.txt")
+            output[sample] = luigi.LocalTarget(sample_only_proteins)
+
+        output['panGenome'] = luigi.LocalTarget(os.path.join(compare_dir,
+            "panGenome.txt"))
+
+        return output
+
+    def run(self):
+        sample_dict = {}
+        set_list = []
+
+        #create output directory
+        run_cmd(['mkdir',
+                '-p',
+                compare_dir])
+
+        for sample in self.samples:
+            #temporary list to store protein IDs per file
+            tmp = []
+            #inputs
+            sample_file = os.path.join(self.protein_dir, sample,
+                    sample + "_common_unique_proteins.txt")
+
+            with open(sample_file, 'r') as fh:
+                for line in fh:
+                    tmp.append(line.strip())
+
+            sample_dict[sample] = set(tmp)
+            set_list.append(set(tmp))
+
+        #find pan genome
+        common_proteins = set.intersection(*set_list)
+        with self.output()['panGenome'].open('w') as fh:
+            for _id in common_proteins:
+                fh.write(_id + "\n")
+
+        #find variable genome
+        for sample in sample_dict:
+            tmp = list(set_list)
+            tmp.remove(sample_dict[sample])
+            print(len(tmp))
+            rest_of_genomes = set.union(*tmp)
+
+            variable_genome = sample_dict[sample].difference(rest_of_genomes)
+
+            with self.output()[sample].open('w') as fh:
+                for _id in variable_genome:
+                    fh.write(_id + "\n")
+
+class assign_GO(luigi.Task):
+    samples = GlobalParams().samples
+    GO_db = luigi.Parameter()
+
+    def requires(self):
+        return pan_genome()
+
+    def output(self):
+        output = {}
+
+        for sample in self.samples:
+            go_variable_genome = os.path.join(annotation_dir, sample, sample +
+                    "_variableGenome_GO.txt")
+
+            output[sample] = luigi.LocalTarget(go_variable_genome)
+
+        go_pan_genome = os.path.join(annotation_dir, "panGenome_GO.txt")
+        output['panGenome_GO'] = luigi.LocalTarget(go_pan_genome)
+
+        return output
+
+    def run(self):
+        for sample in self.samples:
+            #inputs
+            variable_genome = os.path.join(compare_dir, sample +
+                    "_variableGenome.txt")
+            #outputs
+            out_dir = os.path.join(annotation_dir, sample)
+
+            #create output directory
+            run_cmd(['mkdir',
+                    '-p',
+                    out_dir])
+
+            #assign GO terms for variable genomes
+            go_assigned = run_cmd(['python',
+                                    os.path.join(script_dir, 'uniprot2go.py'),
+                                    '-i',
+                                    variable_genome,
+                                    '-d',
+                                    self.GO_db])
+
+            with self.output()[sample].open('w') as fh:
+                fh.write(go_assigned)
+
+        #assign GO terms for pan genome
+        pan_genome = os.path.join(compare_dir, "panGenome.txt")
+
+        go_assigned = run_cmd(['python',
+                                os.path.join(script_dir, 'uniprot2go.py'),
+                                '-i',
+                                pan_genome,
+                                '-d',
+                                self.GO_db])
+
+        with self.output()['panGenome_GO'].open('w') as fh:
+            fh.write(go_assigned)
+
+class GO_statistics(luigi.Task):
+    samples = GlobalParams().samples
+
+    def requires(self):
+        return assign_GO()
+
+    def output(self):
+        output = {}
+
+        for sample in self.samples:
+            go_frequency = os.path.join(annotation_dir, sample, sample +
+                    "_GO_frequency.txt")
+            output[sample] = luigi.LocalTarget(go_frequency)
+
+        go_frequency = os.path.join(annotation_dir, "panGenome_GO_frequency.txt")
+        output['GO_frequency'] = luigi.LocalTarget(go_frequency)
+
+        return output
+
+    def run(self):
+        for sample in self.samples:
+            #temporary list to hold GO terms
+            tmp = []
+            GO_freq_dict = {}
+
+            #read input and process
+            with self.input()[sample].open('r') as fh:
+                for line in fh:
+                    GO_terms = line.split('\t')[1].strip().split(',')
+                    tmp.extend(GO_terms)
+
+            tmp = list(filter(None, tmp))
+            unique_GO_terms = set(tmp)
+            for term in unique_GO_terms:
+                GO_freq_dict[term] = tmp.count(term)
+
+            #write output
+            sorted_GO_freq = sorted(GO_freq_dict.items(), key=lambda kv: kv[1],reverse=True)
+            with self.output()[sample].open('w') as fh:
+                for item in sorted_GO_freq:
+                    fh.write(item[0].strip() + "\t" + str(item[1]) + "\n")
+
+
+        tmp = []
+        GO_freq_dict = {}
+
+        #read pan genome file and process
+        with self.input()['panGenome_GO'].open('r') as fh:
+            for line in fh:
+                GO_terms = line.split('\t')[1].strip().split(',')
+                tmp.extend(GO_terms)
+
+        tmp = list(filter(None, tmp))
+        unique_GO_terms = set(tmp)
+        for term in unique_GO_terms:
+            GO_freq_dict[term] = tmp.count(term)
+
+        #write output
+        sorted_GO_freq = sorted(GO_freq_dict.items(), key=lambda kv: kv[1],reverse=True)
+        with self.output()['GO_frequency'].open('w') as fh:
+            for item in sorted_GO_freq:
+                fh.write(item[0].strip() + "\t" + str(item[1]) + "\n")
+
 #dummy class to run all the tasks
 class run_tasks(luigi.Task):
     def requires(self):
@@ -564,7 +750,10 @@ class run_tasks(luigi.Task):
                     get_protein_id_prodigal(),
                     get_protein_id_FragGeneScan(),
                     extract_unique_protein_final(),
-                    extract_duplicate_protein_final()]
+                    extract_duplicate_protein_final(),
+                    pan_genome(),
+                    assign_GO(),
+                    GO_statistics()]
 
         return task_list
 
