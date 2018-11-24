@@ -606,8 +606,9 @@ class pan_genome(luigi.Task):
         #find variable genome
         for sample in sample_dict:
             tmp = list(set_list)
-            tmp.remove(sample_dict[sample])
-            print(len(tmp))
+            #in case there is only one sample
+            if(len(sample_dict) > 1):
+                tmp.remove(sample_dict[sample])
             rest_of_genomes = set.union(*tmp)
 
             variable_genome = sample_dict[sample].difference(rest_of_genomes)
