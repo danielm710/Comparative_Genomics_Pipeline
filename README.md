@@ -1,6 +1,6 @@
 # FuncmE
 
-A course project for BIOL469, Genomic. It's a comparative genomics pipeline based on Spotify Luigi pipeline framework. It takes Illumina raw sequence reads (either HiSeq or MiSeq platform), assembles genomes, predicts genes, annotates predicted genes, and performs basic comparisons.
+A course project for BIOL469, Genomic. It's a comparative genomics pipeline based on Spotify Luigi pipeline framework. It takes Illumina raw sequence reads (currently tested on HiSeq), assembles genomes, predicts genes, annotates predicted genes, and performs basic comparisons.
 
 ## Getting Started
 
